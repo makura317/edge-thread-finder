@@ -8,7 +8,17 @@ const minResponses = document.querySelector('#min-responses');
 const body = document.querySelector('#body');
 const sort = document.querySelector('#sort');
 const template = document.querySelector('#result-template');
-const threads = await fetch('./data/threads.json').then(r => r.json());
+const sampleThreads = await fetch('./data/threads.json').then(r => r.json());
+let threads = sampleThreads;
+const archiveDate = '2026-09-06';
+try {
+  const response = await fetch(`/api/archive?date=${archiveDate}`);
+  if (response.ok) {
+    const archive = await response.json();
+    threads = archive.threads;
+    document.querySelector('.eyebrow').textContent = `${archiveDate} のR2アーカイブ（${archive.partial ? '部分取得' : '完全取得'}）`;
+  }
+} catch { /* ローカルMVPでは同梱サンプルを使う */ }
 
 const escapeHtml = value => value.replace(/[&<>'"]/g, char => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', "'":'&#39;', '"':'&quot;' })[char]);
 const highlight = (text, words) => escapeHtml(text).replace(new RegExp(`(${words.map(word => word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})`, 'gi'), '<mark>$1</mark>');

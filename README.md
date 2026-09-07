@@ -1,6 +1,12 @@
 # エッヂ落ちスレ検索 MVP
 
-ローカルに取り込んだログ (`data/threads.json`) を、タイトル・本文・期間・レス数で検索する依存なしのWebアプリです。
+R2に取り込んだログを、タイトル・本文・期間・レス数で検索するWebアプリです。ローカル起動時は `data/threads.json` のサンプルで動作します。
+
+## Cloudflareへの接続
+
+`wrangler.jsonc` はR2バケット `edge-thread-finder-archive` を `ARCHIVE` としてWorkerへバインドします。Workerの `GET /api/archive?date=YYYY-MM-DD` はR2のJSONLを検索画面用JSONへ変換して返します。フロントはこのAPIが使える環境では `2026-09-06` のR2ログを、ローカルではサンプルを表示します。
+
+デプロイはWorkerを新規作成・更新する外部操作になるため、認証設定後に明示的に実行します。
 
 ## 起動
 
