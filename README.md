@@ -36,17 +36,9 @@ npm start
 
 ## AI精密判定
 
-`POST /api/analyze-tags` は、まず `lib/tagging.js` の辞書で候補を抽出し、その候補と本文を `gpt-5.6-luna` に渡して採否・追加候補・確信度をJSONで返します。Lunaには分類以外をさせず、タグの根拠を返すよう制約しています。Structured Outputsを使うため、レスポンスは指定スキーマに固定されます。
+公開画面からAIを実行するボタン・APIは置きません。Cronがログ収集後に、未精査のスレを少量ずつ処理します。辞書候補を先に作り、その候補と本文を `gpt-5.6-luna` に渡して採否・追加候補・確信度をJSONで受け取ります。結果は元ログを変更せず、R2の `tags/YYYY-MM-DD.jsonl` にスレIDごとに保存します。
 
-APIキーを設定しない状態でも、アプリは起動できます。精密判定だけが無効になり、辞書候補は利用可能です。
-
-```powershell
-$env:OPENAI_API_KEY = "sk-..."
-$env:TAGGING_MODEL = "gpt-5.6-luna" # 任意
-npm start
-```
-
-キーは `.env` やGitに置かないでください。Cloudflare Workersへ移行する場合も、`OPENAI_API_KEY` をSecretとして登録します。
+各スレの精査完了直後にR2へ書き戻すため、429などで途中停止しても、次回Cronでは未処理分から再開します。既定の上限は1回のCronあたり6スレで、`TAG_BATCH_SIZE`（1〜12）で調整できます。`OPENAI_API_KEY` はCloudflareのSecretとしてだけ登録し、Gitや公開画面には置きません。
 
 ## 日次アーカイブ取得
 

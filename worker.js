@@ -1,8 +1,10 @@
 import { archiveObjectName, parseArchiveJsonl } from './lib/archive.js';
+import { finalTags, parseTagArchiveJsonl, serializeTagArchive, tagArchiveObjectName } from './lib/ai-tag-archive.js';
 import { currentDatUrl, kakoDatUrl, parseDatBody, parseSubjectTxt, threadDateFromId } from './lib/collector.js';
 import { createTaggingRequest, dictionaryCandidates, dictionaryTags, readResponseJson } from './lib/tagging.js';
 
 const BOARD_URL = 'https://bbs.eddibb.cc/liveedge';
+const DEFAULT_TAG_BATCH_SIZE = 6;
 const decoder = new TextDecoder('shift_jis', { fatal: true });
 
 const json = (body, status = 200, cacheControl = 'public, max-age=300') => new Response(JSON.stringify(body), {
@@ -13,21 +15,24 @@ const json = (body, status = 200, cacheControl = 'public, max-age=300') => new R
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
-    if (request.method === 'POST' && url.pathname === '/api/tag-candidates') {
-      return handleCandidates(request);
-    }
-    if (request.method === 'POST' && url.pathname === '/api/analyze-tags') {
-      return handleAnalysis(request, env);
-    }
     if (url.pathname === '/api/archive') {
       const date = url.searchParams.get('date');
       try {
-        const object = await env.ARCHIVE.get(archiveObjectName(date));
+        const [object, tagObject] = await Promise.all([
+          env.ARCHIVE.get(archiveObjectName(date)),
+          env.ARCHIVE.get(tagArchiveObjectName(date))
+        ]);
         if (!object) return json({ error: '指定日のアーカイブはありません。' }, 404);
-        const threads = parseArchiveJsonl(await object.text()).map(thread => ({
-          ...thread,
-          tags: dictionaryTags(thread)
-        }));
+        const savedTags = tagObject ? parseTagArchiveJsonl(await tagObject.text()) : new Map();
+        const threads = parseArchiveJsonl(await object.text()).map(thread => {
+          const tagged = savedTags.get(thread.id);
+          return {
+            ...thread,
+            tags: tagged?.tags || dictionaryTags(thread),
+            tagSource: tagged ? 'luna' : 'dictionary',
+            tagSummary: tagged?.summary
+          };
+        });
         return json({ date, partial: true, threads });
       } catch (error) { return json({ error: error.message }, 400); }
     }
@@ -35,51 +40,96 @@ export default {
   },
 
   async scheduled(controller, env, ctx) {
-    ctx.waitUntil(collectNewThreads(env));
+    ctx.waitUntil(runScheduledWork(env));
   }
 };
 
-async function requestJson(request) {
-  const raw = await request.text();
-  if (raw.length > 200_000) throw new Error('本文が大きすぎます。');
-  const payload = JSON.parse(raw || '{}');
-  if (typeof payload.title !== 'string' || typeof payload.body !== 'string') {
-    throw new Error('title と body は文字列で指定してください。');
+async function runScheduledWork(env) {
+  try {
+    await collectNewThreads(env);
+  } catch (error) {
+    console.error('ログ収集に失敗しました', error);
   }
-  return payload;
+  await refineArchiveBatch(env);
 }
 
-async function handleCandidates(request) {
-  try {
-    const thread = await requestJson(request);
-    return json({ candidates: dictionaryCandidates(thread) }, 200, 'no-store');
-  } catch (error) {
-    return json({ error: error.message }, 400, 'no-store');
+async function refineArchiveBatch(env) {
+  if (!env.OPENAI_API_KEY) return;
+  const listed = await env.ARCHIVE.list({ limit: 1000 });
+  const dates = listed.objects
+    .map(object => object.key.match(/^(\d{4}-\d{2}-\d{2})\.jsonl$/)?.[1])
+    .filter(Boolean)
+    .sort();
+  const batchSize = boundedBatchSize(env.TAG_BATCH_SIZE);
+  let remaining = batchSize;
+
+  for (const date of dates) {
+    if (!remaining) break;
+    const [archiveObject, tagObject] = await Promise.all([
+      env.ARCHIVE.get(archiveObjectName(date)),
+      env.ARCHIVE.get(tagArchiveObjectName(date))
+    ]);
+    if (!archiveObject) continue;
+    const threads = parseArchiveJsonl(await archiveObject.text());
+    const records = tagObject ? parseTagArchiveJsonl(await tagObject.text()) : new Map();
+    const pending = threads.filter(thread => !records.has(thread.id)).slice(0, remaining);
+
+    for (const thread of pending) {
+      const result = await refineThread(thread, env);
+      if (!result) break;
+      records.set(thread.id, result);
+      await env.ARCHIVE.put(tagArchiveObjectName(date), serializeTagArchive(records), {
+        httpMetadata: { contentType: 'application/x-ndjson; charset=utf-8' }
+      });
+      remaining -= 1;
+      if (!remaining) break;
+    }
   }
 }
 
-async function handleAnalysis(request, env) {
-  try {
-    const thread = await requestJson(request);
-    const candidates = dictionaryCandidates(thread);
-    if (!env.OPENAI_API_KEY) {
-      return json({ error: 'OPENAI_API_KEY が未設定です。辞書候補のみ利用できます。', candidates }, 503, 'no-store');
-    }
-    const payload = createTaggingRequest({ ...thread, candidates, model: env.TAGGING_MODEL || 'gpt-5.6-luna' });
-    const upstream = await fetch('https://api.openai.com/v1/responses', {
-      method: 'POST',
-      headers: { authorization: `Bearer ${env.OPENAI_API_KEY}`, 'content-type': 'application/json' },
-      body: JSON.stringify(payload)
-    });
-    const response = await upstream.json();
-    if (!upstream.ok) {
-      return json({ error: response.error?.message || 'OpenAI API の呼び出しに失敗しました。', candidates }, upstream.status, 'no-store');
-    }
-    return json({ candidates, analysis: readResponseJson(response), model: payload.model, usage: response.usage }, 200, 'no-store');
-  } catch (error) {
-    return json({ error: error.message }, 500, 'no-store');
-  }
+function boundedBatchSize(value) {
+  const parsed = Number(value || DEFAULT_TAG_BATCH_SIZE);
+  return Number.isInteger(parsed) ? Math.min(Math.max(parsed, 1), 12) : DEFAULT_TAG_BATCH_SIZE;
 }
+
+async function refineThread(thread, env) {
+  const candidates = dictionaryCandidates(thread);
+  const payload = createTaggingRequest({ ...thread, candidates, model: env.TAGGING_MODEL || 'gpt-5.6-luna' });
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      const upstream = await fetch('https://api.openai.com/v1/responses', {
+        method: 'POST',
+        headers: { authorization: `Bearer ${env.OPENAI_API_KEY}`, 'content-type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const response = await upstream.json();
+      if (upstream.status === 429 && attempt < 2) {
+        await sleep((attempt + 1) * 2000);
+        continue;
+      }
+      if (!upstream.ok) {
+        console.error(`タグ精査に失敗しました: ${upstream.status}`, response.error?.message);
+        return null;
+      }
+      const analysis = readResponseJson(response);
+      return {
+        id: thread.id,
+        analyzedAt: new Date().toISOString(),
+        model: payload.model,
+        summary: analysis.summary,
+        tags: finalTags(analysis),
+        decisions: analysis.tags,
+        usage: response.usage
+      };
+    } catch (error) {
+      if (attempt === 2) console.error('タグ精査中に例外が発生しました', error);
+      else await sleep((attempt + 1) * 2000);
+    }
+  }
+  return null;
+}
+
+const sleep = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
 
 async function collectNewThreads(env) {
   const subjectResponse = await fetch(`${BOARD_URL}/subject.txt`, {
