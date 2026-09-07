@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="エッヂの落ちたスレッドを、タイトルと本文から探せます。" />
+    <title>エッヂ 落ちスレ検索</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <main class="shell">
+      <header class="hero">
+        <a class="brand" href="/" aria-label="エッヂ落ちスレ検索 ホーム">E</a>
+        <div>
+          <p class="eyebrow">EDGE ARCHIVE / MVP</p>
+          <h1>落ちたスレを、もう一度。</h1>
+          <p class="lede">タイトルと本文から、エッヂの過去スレを横断検索。</p>
+        </div>
+      </header>
+
+      <section class="search-panel" aria-label="スレッド検索">
+        <form id="search-form">
+          <label class="search-box" for="query">
+            <span class="search-icon">⌕</span>
+            <input id="query" name="q" autocomplete="off" placeholder="例：WBC、大谷、〇〇の思い出" />
+            <kbd>Enter</kbd>
+          </label>
+          <div class="filter-row">
+            <label>期間
+              <select id="period" name="period">
+                <option value="all">すべて</option>
+                <option value="week">1週間以内</option>
+                <option value="month">1か月以内</option>
+                <option value="year">1年以内</option>
+              </select>
+            </label>
+            <label>最低レス数
+              <select id="min-responses" name="minResponses">
+                <option value="0">指定なし</option>
+                <option value="50">50レス以上</option>
+                <option value="100">100レス以上</option>
+                <option value="500">500レス以上</option>
+              </select>
+            </label>
+            <label class="body-toggle"><input id="body" type="checkbox" checked /> 本文も検索</label>
+            <button type="submit">検索する</button>
+          </div>
+        </form>
+        <div class="suggestions"><span>人気の検索</span><button data-query="野球">野球</button><button data-query="ゲーム">ゲーム</button><button data-query="実況">実況</button><button data-query="映画">映画</button></div>
+      </section>
+
+      <section id="results-section" class="results" aria-live="polite">
+        <div class="results-head">
+          <p id="result-summary">キーワードを入力して検索</p>
+          <label class="sort-label">並び順 <select id="sort"><option value="relevance">関連度順</option><option value="newest">新しい順</option><option value="responses">レス数順</option></select></label>
+        </div>
+        <div id="results-list" class="results-list"></div>
+        <div id="empty-state" class="empty-state"><span>⌕</span><h2>気になる記憶を、たどろう</h2><p>スレッドのタイトル・本文を対象に検索できます。</p><button id="sample-link" class="sample-link">取得サンプルを見る</button></div>
+      </section>
+    </main>
+    <footer>エッヂ落ちスレ検索 MVP <span>·</span> 検索対象: ローカルに取り込んだ公開ログ</footer>
+    <template id="result-template">
+      <article class="thread-card">
+        <a class="thread-title" target="_blank" rel="noopener"></a>
+        <p class="snippet"></p>
+        <div class="tags" aria-label="自動付与タグ"></div>
+        <button class="refine-tags" type="button">Lunaで精密判定</button><p class="analysis-status" role="status"></p>
+        <div class="meta"><span class="date"></span><span class="responses"></span><span class="source">エッヂ取得ログ</span></div>
+      </article>
+    </template>
+    <script type="module" src="app.js"></script>
+  </body>
+</html>
