@@ -6,6 +6,7 @@ const query = document.querySelector('#query');
 const period = document.querySelector('#period');
 const minResponses = document.querySelector('#min-responses');
 const body = document.querySelector('#body');
+const showOp = document.querySelector('#show-op');
 const sort = document.querySelector('#sort');
 const template = document.querySelector('#result-template');
 const sampleThreads = await fetch('./data/threads.json').then(r => r.json());
@@ -23,8 +24,8 @@ try {
 const escapeHtml = value => value.replace(/[&<>'"]/g, char => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', "'":'&#39;', '"':'&quot;' })[char]);
 const highlight = (text, words) => escapeHtml(text).replace(new RegExp(`(${words.map(word => word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})`, 'gi'), '<mark>$1</mark>');
 const dateText = iso => new Intl.DateTimeFormat('ja-JP', { year:'numeric', month:'short', day:'numeric' }).format(new Date(iso));
-function getParams() { const p = new URLSearchParams(location.search); return { q:p.get('q') || '', period:p.get('period') || 'all', minResponses:p.get('minResponses') || '0', body:p.get('body') !== 'false', sort:p.get('sort') || 'relevance' }; }
-function setControls(p) { query.value=p.q; period.value=p.period; minResponses.value=p.minResponses; body.checked=p.body; sort.value=p.sort; }
+function getParams() { const p = new URLSearchParams(location.search); return { q:p.get('q') || '', period:p.get('period') || 'all', minResponses:p.get('minResponses') || '0', body:p.get('body') !== 'false', showOp:p.get('showOp') !== 'false', sort:p.get('sort') || 'relevance' }; }
+function setControls(p) { query.value=p.q; period.value=p.period; minResponses.value=p.minResponses; body.checked=p.body; showOp.checked=p.showOp; sort.value=p.sort; }
 function render() {
   const p = getParams(); setControls(p); list.replaceChildren();
   if (!p.q.trim()) { summary.textContent='キーワードを入力して検索'; empty.hidden=false; return; }
@@ -39,9 +40,9 @@ function render() {
   summary.textContent = `「${p.q}」の検索結果 ${matches.length}件`;
   empty.hidden = matches.length > 0;
   if (!matches.length) { empty.querySelector('h2').textContent='見つかりませんでした'; empty.querySelector('p').textContent='期間やキーワードを変えて、もう一度お試しください。'; return; }
-  matches.forEach(thread => { const node=template.content.cloneNode(true); const a=node.querySelector('.thread-title'); a.href=thread.url; a.innerHTML=highlight(thread.title, words); node.querySelector('.snippet').innerHTML=highlight(thread.body, words); const tags=node.querySelector('.tags'); (thread.tags || []).forEach(tagData => { const [type, value] = Array.isArray(tagData) ? tagData : [tagData.type, tagData.value]; const tag=document.createElement('span'); tag.className='tag'; tag.innerHTML=`<b>${escapeHtml(type)}</b>${escapeHtml(value)}`; tags.append(tag); }); node.querySelector('.date').textContent=dateText(thread.createdAt); node.querySelector('.responses').textContent=`${thread.responses.toLocaleString()}レス`; list.append(node); });
+  matches.forEach(thread => { const node=template.content.cloneNode(true); const a=node.querySelector('.thread-title'); a.href=thread.url; a.innerHTML=highlight(thread.title, words); const snippet=node.querySelector('.snippet'); snippet.hidden=!p.showOp; snippet.innerHTML=highlight(thread.op || '', words); const tags=node.querySelector('.tags'); (thread.tags || []).forEach(tagData => { const [type, value] = Array.isArray(tagData) ? tagData : [tagData.type, tagData.value]; const tag=document.createElement('span'); tag.className=`tag tag-${type}`; tag.textContent=value; tags.append(tag); }); node.querySelector('.date').textContent=dateText(thread.createdAt); node.querySelector('.responses').textContent=`${thread.responses.toLocaleString()}レス`; list.append(node); });
 }
-function submit() { const p = new URLSearchParams({ q:query.value.trim(), period:period.value, minResponses:minResponses.value, body:String(body.checked), sort:sort.value }); history.pushState({}, '', `?${p}`); render(); }
+function submit() { const p = new URLSearchParams({ q:query.value.trim(), period:period.value, minResponses:minResponses.value, body:String(body.checked), showOp:String(showOp.checked), sort:sort.value }); history.pushState({}, '', `?${p}`); render(); }
 form.addEventListener('submit', e => { e.preventDefault(); submit(); }); sort.addEventListener('change', submit); window.addEventListener('popstate', render);
 document.querySelectorAll('[data-query]').forEach(button => button.addEventListener('click', () => { query.value=button.dataset.query; submit(); }));
 document.querySelector('#sample-link').addEventListener('click', () => { query.value='NHKBS'; submit(); });

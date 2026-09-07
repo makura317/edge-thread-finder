@@ -43,6 +43,7 @@
               </select>
             </label>
             <label class="body-toggle"><input id="body" type="checkbox" checked /> 本文も検索</label>
+            <label class="body-toggle"><input id="show-op" type="checkbox" checked /> &gt;&gt;1を表示</label>
             <button type="submit">検索する</button>
           </div>
         </form>
@@ -61,10 +62,10 @@
     <footer>エッヂ落ちスレ検索 MVP <span>·</span> 検索対象: ローカルに取り込んだ公開ログ</footer>
     <template id="result-template">
       <article class="thread-card">
-        <a class="thread-title" target="_blank" rel="noopener"></a>
+        <div class="thread-heading"><a class="thread-title" target="_blank" rel="noopener"></a><span class="responses"></span></div>
         <p class="snippet"></p>
         <div class="tags" aria-label="自動付与タグ"></div>
-        <div class="meta"><span class="date"></span><span class="responses"></span><span class="source">エッヂ取得ログ</span></div>
+        <div class="meta"><span class="date"></span><span class="source">エッヂ取得ログ</span></div>
       </article>
     </template>
     <script type="module" src="app.js"></script>
