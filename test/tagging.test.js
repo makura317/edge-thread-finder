@@ -16,6 +16,14 @@ test('アーカイブ表示用の辞書タグはUIに必要な情報だけを返
   ]);
 });
 
+test('一般的な実況・話題スレにも検索用の辞書タグを付ける', () => {
+  const tags = dictionaryTags({ title: '【フジ】ONE PIECE', body: '今日のアニメ実況スレ' });
+  assert.deepEqual(tags.map(tag => [tag.type, tag.value]), [
+    ['種別', '実況'],
+    ['話題', 'アニメ']
+  ]);
+});
+
 test('Lunaへのリクエストは構造化出力と本文上限を持つ', () => {
   const request = createTaggingRequest({ title: 'テスト', body: 'あ'.repeat(60_000), candidates: [] });
   assert.equal(request.model, 'gpt-5.6-luna');
