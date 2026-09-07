@@ -1,10 +1,19 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createTaggingRequest, dictionaryCandidates } from '../lib/tagging.js';
+import { createTaggingRequest, dictionaryCandidates, dictionaryTags } from '../lib/tagging.js';
 
 test('実況MLBスレから辞書候補を抽出する', () => {
   const tags = dictionaryCandidates({ title: '【NHKBS】WSH@LAD★3', body: 'ドジャースとナショナルズ。大谷の出場予定とミラーの投球を実況する。' });
   assert.deepEqual(tags.map(tag => [tag.type, tag.value]), [['種別', '実況'], ['リーグ', 'MLB'], ['球団', 'ドジャース'], ['球団', 'ナショナルズ'], ['選手', '大谷翔平'], ['選手', 'ボビー・ミラー']]);
+});
+
+test('アーカイブ表示用の辞書タグはUIに必要な情報だけを返す', () => {
+  const tags = dictionaryTags({ title: '【NHKBS】WSH@LAD★3', body: '' });
+  assert.deepEqual(tags.map(tag => [tag.type, tag.value, tag.source]), [
+    ['種別', '実況', 'dictionary'],
+    ['球団', 'ドジャース', 'dictionary'],
+    ['球団', 'ナショナルズ', 'dictionary']
+  ]);
 });
 
 test('Lunaへのリクエストは構造化出力と本文上限を持つ', () => {
