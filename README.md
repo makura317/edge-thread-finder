@@ -41,3 +41,16 @@ npm start
 ```
 
 キーは `.env` やGitに置かないでください。Cloudflare Workersへ移行する場合も、`OPENAI_API_KEY` をSecretとして登録します。
+
+## 日次アーカイブ取得
+
+公開ミラーの過去ログ一覧から、スレッドID（作成UNIX時刻）でJSTの日付範囲を絞り込みます。本文を含む可搬なJSON Lines形式で `data/archive/YYYY-MM-DD.jsonl` に保存し、同時に件数などのmanifestを作ります。SQLite/D1へ移行する際も、このJSONLをそのまま投入できます。
+
+```powershell
+node scripts/import-day.js 2026-09-06 --dry-run
+node scripts/import-day.js 2026-09-06
+```
+
+公開ミラーへ当該日の過去ログが反映される前は、処理を中断して保存しません。部分的な収集結果を「1日分」と誤認させないためです。
+
+ミラー側が日付の途中からしか公開していない場合も同様に保存を止めます。意図して部分ログだけ保存する場合に限り、`--allow-partial` を明示してください。
