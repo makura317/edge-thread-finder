@@ -5,6 +5,10 @@ import { createTaggingRequest, dictionaryCandidates, dictionaryTags, readRespons
 
 const BOARD_URL = 'https://bbs.eddibb.cc/liveedge';
 const DEFAULT_TAG_BATCH_SIZE = 6;
+// A dat fetch can need a second request for the kako fallback. Keep well below
+// Workers' per-invocation subrequest limit and let the next hourly run continue.
+const MAX_COLLECT_PER_RUN = 20;
+const COLLECT_CONCURRENCY = 5;
 const decoder = new TextDecoder('shift_jis', { fatal: true });
 
 const json = (body, status = 200, cacheControl = 'public, max-age=300') => new Response(JSON.stringify(body), {
@@ -146,8 +150,8 @@ async function collectNewThreads(env) {
   }
 
   const knownIds = new Set([...archives.values()].flatMap(threads => threads.map(thread => thread.id)));
-  const fresh = subjects.filter(thread => !knownIds.has(thread.id));
-  const collected = await Promise.all(fresh.map(thread => fetchThread(thread)));
+  const fresh = subjects.filter(thread => !knownIds.has(thread.id)).slice(0, MAX_COLLECT_PER_RUN);
+  const collected = await collectWithConcurrency(fresh, COLLECT_CONCURRENCY);
 
   for (const thread of collected.filter(Boolean)) {
     const date = threadDateFromId(thread.id);
@@ -166,6 +170,15 @@ async function collectNewThreads(env) {
     })).join('\n');
     return env.ARCHIVE.put(archiveObjectName(date), body, { httpMetadata: { contentType: 'application/x-ndjson; charset=utf-8' } });
   }));
+}
+
+async function collectWithConcurrency(subjects, concurrency) {
+  const collected = [];
+  for (let index = 0; index < subjects.length; index += concurrency) {
+    const batch = await Promise.all(subjects.slice(index, index + concurrency).map(fetchThread));
+    collected.push(...batch);
+  }
+  return collected;
 }
 
 async function fetchThread(subject) {
