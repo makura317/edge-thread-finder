@@ -24,7 +24,7 @@ try {
 const escapeHtml = value => value.replace(/[&<>'"]/g, char => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', "'":'&#39;', '"':'&quot;' })[char]);
 const highlight = (text, words) => escapeHtml(text).replace(new RegExp(`(${words.map(word => word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})`, 'gi'), '<mark>$1</mark>');
 const dateText = iso => new Intl.DateTimeFormat('ja-JP', { year:'numeric', month:'short', day:'numeric' }).format(new Date(iso));
-function getParams() { const p = new URLSearchParams(location.search); return { q:p.get('q') || '', period:p.get('period') || 'all', minResponses:p.get('minResponses') || '0', body:p.get('body') !== 'false', showOp:p.get('showOp') !== 'false', sort:p.get('sort') || 'relevance' }; }
+function getParams() { const p = new URLSearchParams(location.search); return { q:p.get('q') || '', period:p.get('period') || 'all', minResponses:p.get('minResponses') || '0', body:p.get('body') !== 'false', showOp:p.get('showOp') === 'true', sort:p.get('sort') || 'relevance' }; }
 function setControls(p) { query.value=p.q; period.value=p.period; minResponses.value=p.minResponses; body.checked=p.body; showOp.checked=p.showOp; sort.value=p.sort; }
 function render() {
   const p = getParams(); setControls(p); list.replaceChildren();
