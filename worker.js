@@ -1,18 +1,24 @@
 import { archiveObjectName, parseArchiveJsonl } from './lib/archive.js';
 import { currentDatUrl, kakoDatUrl, parseDatBody, parseSubjectTxt, threadDateFromId } from './lib/collector.js';
-import { dictionaryTags } from './lib/tagging.js';
+import { createTaggingRequest, dictionaryCandidates, dictionaryTags, readResponseJson } from './lib/tagging.js';
 
 const BOARD_URL = 'https://bbs.eddibb.cc/liveedge';
 const decoder = new TextDecoder('shift_jis', { fatal: true });
 
-const json = (body, status = 200) => new Response(JSON.stringify(body), {
+const json = (body, status = 200, cacheControl = 'public, max-age=300') => new Response(JSON.stringify(body), {
   status,
-  headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'public, max-age=300' }
+  headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': cacheControl }
 });
 
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
+    if (request.method === 'POST' && url.pathname === '/api/tag-candidates') {
+      return handleCandidates(request);
+    }
+    if (request.method === 'POST' && url.pathname === '/api/analyze-tags') {
+      return handleAnalysis(request, env);
+    }
     if (url.pathname === '/api/archive') {
       const date = url.searchParams.get('date');
       try {
@@ -32,6 +38,48 @@ export default {
     ctx.waitUntil(collectNewThreads(env));
   }
 };
+
+async function requestJson(request) {
+  const raw = await request.text();
+  if (raw.length > 200_000) throw new Error('本文が大きすぎます。');
+  const payload = JSON.parse(raw || '{}');
+  if (typeof payload.title !== 'string' || typeof payload.body !== 'string') {
+    throw new Error('title と body は文字列で指定してください。');
+  }
+  return payload;
+}
+
+async function handleCandidates(request) {
+  try {
+    const thread = await requestJson(request);
+    return json({ candidates: dictionaryCandidates(thread) }, 200, 'no-store');
+  } catch (error) {
+    return json({ error: error.message }, 400, 'no-store');
+  }
+}
+
+async function handleAnalysis(request, env) {
+  try {
+    const thread = await requestJson(request);
+    const candidates = dictionaryCandidates(thread);
+    if (!env.OPENAI_API_KEY) {
+      return json({ error: 'OPENAI_API_KEY が未設定です。辞書候補のみ利用できます。', candidates }, 503, 'no-store');
+    }
+    const payload = createTaggingRequest({ ...thread, candidates, model: env.TAGGING_MODEL || 'gpt-5.6-luna' });
+    const upstream = await fetch('https://api.openai.com/v1/responses', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${env.OPENAI_API_KEY}`, 'content-type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const response = await upstream.json();
+    if (!upstream.ok) {
+      return json({ error: response.error?.message || 'OpenAI API の呼び出しに失敗しました。', candidates }, upstream.status, 'no-store');
+    }
+    return json({ candidates, analysis: readResponseJson(response), model: payload.model, usage: response.usage }, 200, 'no-store');
+  } catch (error) {
+    return json({ error: error.message }, 500, 'no-store');
+  }
+}
 
 async function collectNewThreads(env) {
   const subjectResponse = await fetch(`${BOARD_URL}/subject.txt`, {
