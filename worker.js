@@ -138,9 +138,14 @@ async function refineThread(thread, env) {
         body: JSON.stringify(payload)
       });
       const response = await upstream.json().catch(() => ({}));
-      if (upstream.status === 429 && attempt < 2) {
-        await sleep((attempt + 1) * 2000);
-        continue;
+      // A daily request limit cannot recover in a few seconds. Retrying here
+      // just spends more request quota, so leave it for the next hourly Cron.
+      if (upstream.status === 429) {
+        console.error('タグ精査がレート制限されました', response.error?.message);
+        return { error: {
+          code: 'openai_429',
+          message: errorMessage(response.error?.message || 'OpenAI API のレート制限に達しました。')
+        } };
       }
       if (!upstream.ok) {
         console.error(`タグ精査に失敗しました: ${upstream.status}`, response.error?.message);
