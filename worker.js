@@ -9,6 +9,7 @@ const DEFAULT_TAG_BATCH_SIZE = 6;
 // Workers' per-invocation subrequest limit and let the next hourly run continue.
 const MAX_COLLECT_PER_RUN = 20;
 const COLLECT_CONCURRENCY = 5;
+const TAGGING_STATUS_KEY = 'status/tagging.json';
 const decoder = new TextDecoder('shift_jis', { fatal: true });
 
 const json = (body, status = 200, cacheControl = 'public, max-age=300') => new Response(JSON.stringify(body), {
@@ -19,6 +20,17 @@ const json = (body, status = 200, cacheControl = 'public, max-age=300') => new R
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
+    if (url.pathname === '/api/status') {
+      try {
+        const object = await env.ARCHIVE.get(TAGGING_STATUS_KEY);
+        return json({
+          keyConfigured: Boolean(env.OPENAI_API_KEY),
+          tagging: object ? JSON.parse(await object.text()) : null
+        }, 200, 'no-store');
+      } catch (error) {
+        return json({ error: error.message }, 500, 'no-store');
+      }
+    }
     if (url.pathname === '/api/archive') {
       const date = url.searchParams.get('date');
       try {
@@ -49,16 +61,29 @@ export default {
 };
 
 async function runScheduledWork(env) {
+  let collection = { state: 'success' };
   try {
     await collectNewThreads(env);
   } catch (error) {
     console.error('ログ収集に失敗しました', error);
+    collection = { state: 'failed', error: errorMessage(error) };
   }
-  await refineArchiveBatch(env);
+
+  let tagging;
+  try {
+    tagging = await refineArchiveBatch(env);
+  } catch (error) {
+    console.error('タグ精査のバッチ処理に失敗しました', error);
+    tagging = { state: 'failed', processed: 0, error: errorMessage(error) };
+  }
+
+  await writeTaggingStatus(env, { collection, tagging });
 }
 
 async function refineArchiveBatch(env) {
-  if (!env.OPENAI_API_KEY) return;
+  if (!env.OPENAI_API_KEY) {
+    return { state: 'skipped', processed: 0, reason: 'missing_openai_api_key' };
+  }
   const listed = await env.ARCHIVE.list({ limit: 1000 });
   const dates = listed.objects
     .map(object => object.key.match(/^(\d{4}-\d{2}-\d{2})\.jsonl$/)?.[1])
@@ -66,6 +91,7 @@ async function refineArchiveBatch(env) {
     .sort();
   const batchSize = boundedBatchSize(env.TAG_BATCH_SIZE);
   let remaining = batchSize;
+  let processed = 0;
 
   for (const date of dates) {
     if (!remaining) break;
@@ -80,15 +106,20 @@ async function refineArchiveBatch(env) {
 
     for (const thread of pending) {
       const result = await refineThread(thread, env);
-      if (!result) break;
-      records.set(thread.id, result);
+      if (result.error) {
+        return { state: 'failed', processed, error: result.error };
+      }
+      records.set(thread.id, result.record);
       await env.ARCHIVE.put(tagArchiveObjectName(date), serializeTagArchive(records), {
         httpMetadata: { contentType: 'application/x-ndjson; charset=utf-8' }
       });
       remaining -= 1;
+      processed += 1;
       if (!remaining) break;
     }
   }
+
+  return { state: 'success', processed, reason: processed ? 'tagged' : 'no_pending_threads' };
 }
 
 function boundedBatchSize(value) {
@@ -106,17 +137,20 @@ async function refineThread(thread, env) {
         headers: { authorization: `Bearer ${env.OPENAI_API_KEY}`, 'content-type': 'application/json' },
         body: JSON.stringify(payload)
       });
-      const response = await upstream.json();
+      const response = await upstream.json().catch(() => ({}));
       if (upstream.status === 429 && attempt < 2) {
         await sleep((attempt + 1) * 2000);
         continue;
       }
       if (!upstream.ok) {
         console.error(`タグ精査に失敗しました: ${upstream.status}`, response.error?.message);
-        return null;
+        return { error: {
+          code: `openai_${upstream.status}`,
+          message: errorMessage(response.error?.message || 'OpenAI API がエラーを返しました。')
+        } };
       }
       const analysis = readResponseJson(response);
-      return {
+      return { record: {
         id: thread.id,
         analyzedAt: new Date().toISOString(),
         model: payload.model,
@@ -124,13 +158,33 @@ async function refineThread(thread, env) {
         tags: finalTags(analysis),
         decisions: analysis.tags,
         usage: response.usage
-      };
+      } };
     } catch (error) {
-      if (attempt === 2) console.error('タグ精査中に例外が発生しました', error);
+      if (attempt === 2) {
+        console.error('タグ精査中に例外が発生しました', error);
+        return { error: { code: 'request_exception', message: errorMessage(error) } };
+      }
       else await sleep((attempt + 1) * 2000);
     }
   }
-  return null;
+  return { error: { code: 'request_failed', message: 'OpenAI API リクエストに失敗しました。' } };
+}
+
+async function writeTaggingStatus(env, status) {
+  try {
+    await env.ARCHIVE.put(TAGGING_STATUS_KEY, JSON.stringify({
+      updatedAt: new Date().toISOString(),
+      keyConfigured: Boolean(env.OPENAI_API_KEY),
+      ...status
+    }), { httpMetadata: { contentType: 'application/json; charset=utf-8' } });
+  } catch (error) {
+    console.error('タグ精査ステータスの保存に失敗しました', error);
+  }
+}
+
+function errorMessage(error) {
+  const message = error instanceof Error ? error.message : String(error || '不明なエラー');
+  return message.replace(/Bearer\s+\S+/gi, 'Bearer [redacted]').slice(0, 240);
 }
 
 const sleep = milliseconds => new Promise(resolve => setTimeout(resolve, milliseconds));
